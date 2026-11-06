@@ -37,7 +37,7 @@ jobs:
               mkdir -p /src/dist/debian
               cp /tmp/build/*.deb /src/dist/debian/
             '
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: debian-package
           path: dist/debian/*.deb
@@ -67,7 +67,7 @@ jobs:
               mkdir -p /src/dist/fedora
               cp /tmp/rpmbuild/RPMS/*/*.rpm /src/dist/fedora/
             '
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: fedora-package
           path: dist/fedora/*.rpm
@@ -96,7 +96,7 @@ jobs:
               chown -R builder:builder /pkg
               runuser -u builder -- makepkg --noconfirm --cleanbuild --nodeps
             '
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: arch-package
           path: dist/arch/*.pkg.tar.zst
@@ -130,7 +130,7 @@ jobs:
           mkdir -p dist
           ./linuxdeploy-x86_64.AppImage --appdir AppDir --plugin qt --output appimage
           mv ./*.AppImage dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: appimage
           path: dist/*.AppImage
