@@ -57,7 +57,6 @@ BuildRequires:	pkgconfig(Qt6Svg)
 BuildRequires:	pkgconfig(Qt6Xml)
 BuildRequires:	pkgconfig(Qt6Network)
 %endif
-BuildRequires:	pkgconfig(alsa)
 BuildRequires:	pkgconfig(libpipewire-0.3)
 
 %description
@@ -74,7 +73,7 @@ same of QjackCtl (https://qjackctl.sourceforge.io).
 source /opt/qt6.11-static/bin/qt6.11-static-env.sh
 %endif
 CXX=%{_GXX} CC=%{_GCC} \
-cmake -DCMAKE_INSTALL_PREFIX=%{_prefix} -DCONFIG_ALSA_MIDI=ON -Wno-dev -B build
+cmake -DCMAKE_INSTALL_PREFIX=%{_prefix} -DCONFIG_ALSA_MIDI=OFF -Wno-dev -B build
 cmake --build build %{?_smp_mflags}
 
 %install

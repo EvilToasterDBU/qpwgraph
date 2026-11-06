@@ -6,9 +6,13 @@
   using the [Qt C++ framework](https://qt.io), based and pretty much like the
   same of [QjackCtl](https://qjackctl.sourceforge.io).
 
-  Source code repository: https://gitlab.freedesktop.org/rncbc/qpwgraph
+  Source code repository: https://github.com/EvilToasterDBU/qpwgraph
 
-  Upstream author: Rui Nuno Capela <rncbc@rncbc.org>.
+  Based on the upstream project at https://gitlab.freedesktop.org/rncbc/qpwgraph,
+  by Rui Nuno Capela <rncbc@rncbc.org>.
+
+  The redesign branch adds a snap grid, filters PipeWire to audio ports by
+  default, and supports saved user-defined audio pass-through nodes.
 
 ## Prerequisites
 

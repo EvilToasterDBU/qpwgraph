@@ -25,10 +25,17 @@
 #include "qpwgraph_connect.h"
 
 #include <pipewire/pipewire.h>
+#include <pipewire/filter.h>
 
 #include <QMutexLocker>
 #include <QMultiHash>
 #include <QTimer>
+#include <QUuid>
+#include <QSettings>
+#include <QVariantMap>
+#include <QVector>
+
+#include <cstring>
 
 
 // Default port types...
@@ -190,6 +197,53 @@ struct qpwgraph_pipewire::Data
 	typedef QMultiHash<Node::NameKey, uint> NodeNames;
 
 	NodeNames *node_names;
+};
+
+struct qpwgraph_pipewire::Relay
+{
+	QString id;
+	QString name;
+	int channels;
+	struct pw_filter *filter;
+	struct spa_hook listener;
+	QVector<void *> inputs;
+	QVector<void *> outputs;
+};
+
+struct qpwgraph_relay_port
+{
+	qpwgraph_pipewire::Relay *relay;
+	uint channel;
+	bool is_output;
+};
+
+static
+void qpwgraph_relay_process ( void *data, struct spa_io_position *position )
+{
+	qpwgraph_pipewire::Relay *relay
+		= static_cast<qpwgraph_pipewire::Relay *> (data);
+	if (relay == nullptr || position == nullptr)
+		return;
+
+	const uint32_t n_samples = position->clock.duration;
+	for (int channel = 0; channel < relay->channels; ++channel) {
+		float *input = static_cast<float *>(pw_filter_get_dsp_buffer(
+			relay->inputs.value(channel), n_samples));
+		float *output = static_cast<float *>(pw_filter_get_dsp_buffer(
+			relay->outputs.value(channel), n_samples));
+		if (output == nullptr)
+			continue;
+		if (input) {
+			std::memcpy(output, input, n_samples * sizeof(float));
+		} else {
+			std::memset(output, 0, n_samples * sizeof(float));
+		}
+	}
+}
+
+static const struct pw_filter_events qpwgraph_relay_events = {
+	.version = PW_VERSION_FILTER_EVENTS,
+	.process = qpwgraph_relay_process
 };
 
 inline uint qHash ( const qpwgraph_pipewire::Node::NameKey& key )
@@ -709,6 +763,201 @@ qpwgraph_pipewire::~qpwgraph_pipewire (void)
 }
 
 
+// Create one persistent audio pass-through filter. The caller holds the
+// PipeWire thread-loop lock.
+bool qpwgraph_pipewire::createAudioRelay (
+	const QString& id, const QString& name, int channels )
+{
+	if (m_data == nullptr || m_data->core == nullptr || channels < 1 || channels > 8)
+		return false;
+
+	Relay *relay = new Relay;
+	relay->id = id;
+	relay->name = name;
+	relay->channels = channels;
+	relay->filter = nullptr;
+	relay->inputs.resize(channels);
+	relay->outputs.resize(channels);
+	spa_zero(relay->listener);
+
+	const QByteArray node_name
+		= QString("qpwgraph-relay-%1").arg(id).toUtf8();
+	const QByteArray node_description = name.toUtf8();
+	struct pw_properties *properties = pw_properties_new(
+		PW_KEY_NODE_NAME, node_name.constData(),
+		PW_KEY_NODE_DESCRIPTION, node_description.constData(),
+		PW_KEY_APP_NAME, "QPWGraph",
+		PW_KEY_MEDIA_TYPE, "Audio",
+		PW_KEY_MEDIA_CATEGORY, "Filter",
+		PW_KEY_MEDIA_ROLE, "DSP",
+		PW_KEY_MEDIA_CLASS, "Audio/Filter",
+		nullptr);
+	if (properties == nullptr) {
+		delete relay;
+		return false;
+	}
+
+	relay->filter = pw_filter_new(m_data->core,
+		node_name.constData(), properties);
+	if (relay->filter == nullptr) {
+		delete relay;
+		return false;
+	}
+
+	for (int channel = 0; channel < channels; ++channel) {
+		const QString suffix = QString::number(channel + 1);
+		const QString input_name = "input_" + suffix;
+		const QString output_name = "output_" + suffix;
+		const QByteArray input_name_utf8 = input_name.toUtf8();
+		const QByteArray output_name_utf8 = output_name.toUtf8();
+
+		void *input = pw_filter_add_port(relay->filter,
+			PW_DIRECTION_INPUT, PW_FILTER_PORT_FLAG_MAP_BUFFERS,
+			sizeof(qpwgraph_relay_port),
+			pw_properties_new(PW_KEY_FORMAT_DSP, DEFAULT_AUDIO_TYPE,
+				PW_KEY_PORT_NAME, input_name_utf8.constData(), nullptr),
+			nullptr, 0);
+		void *output = pw_filter_add_port(relay->filter,
+			PW_DIRECTION_OUTPUT, PW_FILTER_PORT_FLAG_MAP_BUFFERS,
+			sizeof(qpwgraph_relay_port),
+			pw_properties_new(PW_KEY_FORMAT_DSP, DEFAULT_AUDIO_TYPE,
+				PW_KEY_PORT_NAME, output_name_utf8.constData(), nullptr),
+			nullptr, 0);
+		if (input == nullptr || output == nullptr) {
+			pw_filter_destroy(relay->filter);
+			delete relay;
+			return false;
+		}
+
+		qpwgraph_relay_port *input_port
+			= static_cast<qpwgraph_relay_port *> (input);
+		input_port->relay = relay;
+		input_port->channel = uint(channel);
+		input_port->is_output = false;
+		qpwgraph_relay_port *output_port
+			= static_cast<qpwgraph_relay_port *> (output);
+		output_port->relay = relay;
+		output_port->channel = uint(channel);
+		output_port->is_output = true;
+		relay->inputs[channel] = input;
+		relay->outputs[channel] = output;
+	}
+
+	pw_filter_add_listener(relay->filter, &relay->listener,
+		&qpwgraph_relay_events, relay);
+	if (pw_filter_connect(relay->filter, PW_FILTER_FLAG_RT_PROCESS,
+			nullptr, 0) < 0) {
+		pw_filter_destroy(relay->filter);
+		delete relay;
+		return false;
+	}
+
+	m_audio_relays.insert(id, relay);
+	return true;
+}
+
+
+void qpwgraph_pipewire::restoreAudioRelays (void)
+{
+	qpwgraph_canvas *graph_canvas = canvas();
+	QSettings *settings = (graph_canvas ? graph_canvas->settings() : nullptr);
+	if (settings == nullptr)
+		return;
+
+	settings->beginGroup("/CustomAudioRelays");
+	const QVariantList relays = settings->value("items").toList();
+	settings->endGroup();
+	if (relays.isEmpty())
+		return;
+
+	QMutexLocker locker(&m_mutex1);
+	if (m_data == nullptr)
+		return;
+	pw_thread_loop_lock(m_data->loop);
+	for (const QVariant& value : relays) {
+		const QVariantMap relay = value.toMap();
+		const QString id = relay.value("id").toString();
+		const QString name = relay.value("name").toString();
+		const int channels = relay.value("channels").toInt();
+		if (!id.isEmpty() && !name.isEmpty())
+			createAudioRelay(id, name, channels);
+	}
+	pw_thread_loop_unlock(m_data->loop);
+}
+
+
+void qpwgraph_pipewire::saveAudioRelays (void) const
+{
+	qpwgraph_canvas *graph_canvas = canvas();
+	QSettings *settings = (graph_canvas ? graph_canvas->settings() : nullptr);
+	if (settings == nullptr)
+		return;
+
+	QVariantList relays;
+	for (Relay *relay : m_audio_relays) {
+		QVariantMap value;
+		value.insert("id", relay->id);
+		value.insert("name", relay->name);
+		value.insert("channels", relay->channels);
+		relays.append(value);
+	}
+
+	settings->beginGroup("/CustomAudioRelays");
+	settings->setValue("items", relays);
+	settings->endGroup();
+	settings->sync();
+}
+
+
+bool qpwgraph_pipewire::addAudioRelay ( const QString& name, int channels )
+{
+	if (name.trimmed().isEmpty() || channels < 1 || channels > 8)
+		return false;
+
+	QMutexLocker locker(&m_mutex1);
+	if (m_data == nullptr)
+		return false;
+
+	const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+	pw_thread_loop_lock(m_data->loop);
+	const bool created = createAudioRelay(id, name.trimmed(), channels);
+	pw_thread_loop_unlock(m_data->loop);
+	if (created) {
+		saveAudioRelays();
+		changedNotify();
+	}
+	return created;
+}
+
+
+bool qpwgraph_pipewire::removeAudioRelay ( uint node_id )
+{
+	QMutexLocker locker(&m_mutex1);
+	if (m_data == nullptr)
+		return false;
+
+	bool removed = false;
+	pw_thread_loop_lock(m_data->loop);
+	for (auto iter = m_audio_relays.begin(); iter != m_audio_relays.end(); ++iter) {
+		Relay *relay = iter.value();
+		if (pw_filter_get_node_id(relay->filter) == node_id) {
+			pw_filter_disconnect(relay->filter);
+			pw_filter_destroy(relay->filter);
+			delete relay;
+			m_audio_relays.erase(iter);
+			removed = true;
+			break;
+		}
+	}
+	pw_thread_loop_unlock(m_data->loop);
+	if (removed) {
+		saveAudioRelays();
+		changedNotify();
+	}
+	return removed;
+}
+
+
 // Client methods.
 bool qpwgraph_pipewire::open (void)
 {
@@ -779,6 +1028,7 @@ bool qpwgraph_pipewire::open (void)
 
 	pw_thread_loop_start(m_data->loop);
 	pw_thread_loop_unlock(m_data->loop);
+	QTimer::singleShot(0, this, [this]() { restoreAudioRelays(); });
 	return true;
 }
 
@@ -791,6 +1041,12 @@ void qpwgraph_pipewire::close (void)
 	QMutexLocker locker1(&m_mutex1);
 
 	pw_thread_loop_lock(m_data->loop);
+	for (Relay *relay : m_audio_relays) {
+		pw_filter_disconnect(relay->filter);
+		pw_filter_destroy(relay->filter);
+		delete relay;
+	}
+	m_audio_relays.clear();
 
 	clearObjects();
 

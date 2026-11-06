@@ -117,6 +117,10 @@ protected slots:
 	// Options/settings dialog accessor.
 	void graphOptions();
 
+	// User-defined PipeWire audio nodes.
+	void addAudioRelay();
+	void removeAudioRelay();
+
 	// Patchbay menu slots.
 	void patchbayNew();
 	void patchbayOpen();

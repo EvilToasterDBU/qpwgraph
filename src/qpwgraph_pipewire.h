@@ -82,6 +82,7 @@ public:
 	// PipeWire client data struct access.
 	//
 	struct Data;
+	struct Relay;
 	struct Proxy;
 	struct Object;
 	struct Node;
@@ -89,6 +90,10 @@ public:
 	struct Link;
 
 	Data *data() const;
+
+	// User-defined audio pass-through nodes.
+	bool addAudioRelay(const QString& name, int channels);
+	bool removeAudioRelay(uint node_id);
 
 	// Object methods...
 	Object *findObject(uint id) const;
@@ -150,8 +155,14 @@ protected:
 
 private:
 
+	bool createAudioRelay(const QString& id,
+		const QString& name, int channels);
+	void restoreAudioRelays();
+	void saveAudioRelays() const;
+
 	// PipeWire client impl.
 	Data *m_data;
+	QHash<QString, Relay *> m_audio_relays;
 
 	// PipeWire object database.
 	QHash<uint, Object *> m_objectids;

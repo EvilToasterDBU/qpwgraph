@@ -28,6 +28,8 @@
 #include "qpwgraph_alsamidi.h"
 
 #include "qpwgraph_connect.h"
+#include "qpwgraph_node.h"
+#include "qpwgraph_port.h"
 
 #include "qpwgraph_patchbay.h"
 #include "qpwgraph_patchman.h"
@@ -46,6 +48,7 @@
 #include <QFileDialog>
 
 #include <QMessageBox>
+#include <QInputDialog>
 #include <QCheckBox>
 
 #include <QHBoxLayout>
@@ -277,6 +280,16 @@ qpwgraph_main::qpwgraph_main (
 	QObject::connect(m_ui.graphDisconnectAction,
 		SIGNAL(triggered(bool)),
 		m_ui.graphCanvas, SLOT(disconnectItems()));
+
+	m_ui.graphMenu->addSeparator();
+	QAction *add_audio_relay_action = m_ui.graphMenu->addAction(
+		tr("Add intermediate audio node…"));
+	QAction *remove_audio_relay_action = m_ui.graphMenu->addAction(
+		tr("Remove selected intermediate node…"));
+	QObject::connect(add_audio_relay_action,
+		SIGNAL(triggered(bool)), SLOT(addAudioRelay()));
+	QObject::connect(remove_audio_relay_action,
+		SIGNAL(triggered(bool)), SLOT(removeAudioRelay()));
 
 	QObject::connect(m_ui.graphOptionsAction,
 		SIGNAL(triggered(bool)),
@@ -1549,6 +1562,56 @@ void qpwgraph_main::orientationChanged ( Qt::Orientation orientation )
 
 
 // Options/settings dialog accessor.
+void qpwgraph_main::addAudioRelay (void)
+{
+	bool ok = false;
+	const QString name = QInputDialog::getText(this,
+		tr("Add intermediate audio node"), tr("Node name:"),
+		QLineEdit::Normal, tr("Audio relay"), &ok).trimmed();
+	if (!ok || name.isEmpty())
+		return;
+
+	const int channels = QInputDialog::getInt(this,
+		tr("Add intermediate audio node"), tr("Number of channels:"),
+		2, 1, 8, 1, &ok);
+	if (!ok)
+		return;
+
+	if (m_pipewire == nullptr || !m_pipewire->addAudioRelay(name, channels)) {
+		QMessageBox::warning(this, tr("Audio node"),
+			tr("The PipeWire audio node could not be created."));
+	}
+}
+
+
+void qpwgraph_main::removeAudioRelay (void)
+{
+	qpwgraph_item *item = m_ui.graphCanvas->currentItem();
+	qpwgraph_node *node = nullptr;
+	if (item && item->type() == qpwgraph_node::Type) {
+		node = static_cast<qpwgraph_node *> (item);
+	} else if (item && item->type() == qpwgraph_port::Type) {
+		qpwgraph_port *port = static_cast<qpwgraph_port *> (item);
+		node = port->portNode();
+	}
+	if (node == nullptr || m_pipewire == nullptr) {
+		QMessageBox::information(this, tr("Audio node"),
+			tr("Select an intermediate audio node first."));
+		return;
+	}
+
+	if (QMessageBox::question(this, tr("Remove intermediate audio node"),
+			tr("Remove the audio node \"%1\" and its PipeWire connections?")
+			.arg(node->nodeNameLabel())) != QMessageBox::Yes)
+		return;
+
+	if (!m_pipewire->removeAudioRelay(node->nodeId())) {
+		QMessageBox::information(this, tr("Audio node"),
+			tr("The selected node is not a custom audio node."));
+	}
+}
+
+
 void qpwgraph_main::graphOptions (void)
 {
 	qpwgraph_options(this).exec();
