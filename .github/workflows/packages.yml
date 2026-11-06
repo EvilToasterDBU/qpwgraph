@@ -1,0 +1,137 @@
+name: Linux packages
+
+on:
+  push:
+    branches:
+      - redesign/graph-canvas
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  debian:
+    name: Debian package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build Debian package
+        run: |
+          mkdir -p dist
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src" \
+            -w /src \
+            debian:stable-slim sh -euxc '
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                build-essential cmake debhelper pkg-config \
+                qt6-base-dev qt6-base-dev-tools qt6-tools-dev \
+                qt6-tools-dev-tools qt6-l10n-tools qt6-svg-dev \
+                libxkbcommon-dev libgl-dev libpipewire-0.3-dev
+              mkdir -p /tmp/build/qpwgraph
+              cp -a /src/. /tmp/build/qpwgraph/
+              cd /tmp/build/qpwgraph
+              DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b
+              mkdir -p /src/dist/debian
+              cp /tmp/build/*.deb /src/dist/debian/
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-package
+          path: dist/debian/*.deb
+          if-no-files-found: error
+
+  fedora:
+    name: Fedora RPM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build source archive
+        run: |
+          mkdir -p dist
+          git archive --format=tar --prefix=qpwgraph-1.0.4/ HEAD | gzip > dist/qpwgraph-1.0.4.tar.gz
+      - name: Build RPM
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src" \
+            fedora:latest sh -euxc '
+              dnf install -y rpm-build cmake gcc gcc-c++ qt6-qtbase-devel \
+                qt6-qtsvg-devel qt6-qttools-devel pipewire-devel
+              mkdir -p /tmp/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+              cp /src/dist/qpwgraph-1.0.4.tar.gz /tmp/rpmbuild/SOURCES/
+              cp /src/rpm/qpwgraph.spec /tmp/rpmbuild/SPECS/
+              rpmbuild -bb --define "_topdir /tmp/rpmbuild" \
+                /tmp/rpmbuild/SPECS/qpwgraph.spec
+              mkdir -p /src/dist/fedora
+              cp /tmp/rpmbuild/RPMS/*/*.rpm /src/dist/fedora/
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fedora-package
+          path: dist/fedora/*.rpm
+          if-no-files-found: error
+
+  arch:
+    name: Arch Linux package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Prepare source archive
+        run: |
+          mkdir -p dist/arch
+          git archive --format=tar --prefix=qpwgraph-1.0.4/ HEAD | gzip > dist/arch/qpwgraph-1.0.4.tar.gz
+          cp packaging/arch/PKGBUILD dist/arch/
+          archive_sha256=$(sha256sum dist/arch/qpwgraph-1.0.4.tar.gz | cut -d ' ' -f 1)
+          sed -i "s/sha256sums=('SKIP')/sha256sums=('${archive_sha256}')/" dist/arch/PKGBUILD
+      - name: Build package
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/dist/arch:/pkg" \
+            -w /pkg \
+            archlinux:base-devel sh -euxc '
+              pacman -Syu --noconfirm --needed cmake qt6-base qt6-svg pipewire
+              useradd -m builder
+              chown -R builder:builder /pkg
+              runuser -u builder -- makepkg --noconfirm --cleanbuild --nodeps
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-package
+          path: dist/arch/*.pkg.tar.zst
+          if-no-files-found: error
+
+  appimage:
+    name: AppImage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ pkg-config qt6-base-dev qt6-svg-dev \
+            libxkbcommon-dev libgl-dev libpipewire-0.3-dev
+      - name: Build application
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCONFIG_ALSA_MIDI=OFF
+          cmake --build build --parallel 2
+          DESTDIR="$PWD/AppDir" cmake --install build --prefix /usr
+      - name: Package AppImage
+        run: |
+          curl -fsSL -o linuxdeploy-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fsSL -o linuxdeploy-plugin-qt-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export PATH="$PWD:$PATH"
+          mkdir -p dist
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --plugin qt --output appimage
+          mv ./*.AppImage dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: dist/*.AppImage
+          if-no-files-found: error

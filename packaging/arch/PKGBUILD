@@ -1,0 +1,25 @@
+pkgname=qpwgraph
+pkgver=1.0.4
+pkgrel=1
+pkgdesc='A PipeWire graph manager with a redesigned audio routing canvas'
+arch=('x86_64')
+url='https://github.com/EvilToasterDBU/qpwgraph'
+license=('GPL2')
+depends=('pipewire' 'qt6-base' 'qt6-svg')
+makedepends=('cmake' 'gcc')
+source=("qpwgraph-${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+	cmake -S "${srcdir}/qpwgraph-${pkgver}" -B build \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCONFIG_ALSA_MIDI=OFF
+	cmake --build build --parallel
+}
+
+package() {
+	DESTDIR="${pkgdir}" cmake --install build --prefix /usr
+	install -Dm644 "${srcdir}/qpwgraph-${pkgver}/LICENSE.md" \
+		"${pkgdir}/usr/share/licenses/${pkgname}/LICENSE.md"
+}

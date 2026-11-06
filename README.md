@@ -50,6 +50,13 @@
 
   Enjoy.
 
+## Packages
+
+  The GitHub Actions workflow builds Debian (`.deb`), Fedora (`.rpm`), Arch
+  Linux (`.pkg.tar.zst`), and AppImage packages when the redesign branch is
+  updated or a `v*` tag is pushed. Workflow runs can also be started manually;
+  their packages are available as downloadable workflow artifacts.
+
 ## Documentation
 
   * [User Manual](docs/qpwgraph-user_manual.md)
