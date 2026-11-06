@@ -117,7 +117,8 @@ public:
 		const QString& port_name,
 		qpwgraph_item::Mode port_mode,
 		uint port_type,
-		uint port_flags);
+		uint port_flags,
+		bool port_audio);
 	void destroyPort(Port *port);
 
 	// Link methods....

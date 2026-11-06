@@ -143,7 +143,7 @@ struct qpwgraph_pipewire::Node : public qpwgraph_pipewire::Object
 
 struct qpwgraph_pipewire::Port : public qpwgraph_pipewire::Object
 {
-	Port (uint port_id) : Object(port_id, Type::Port) {}
+	Port (uint port_id) : Object(port_id, Type::Port), port_audio(false) {}
 
 	enum Flags {
 		None     = 0,
@@ -158,6 +158,7 @@ struct qpwgraph_pipewire::Port : public qpwgraph_pipewire::Object
 	qpwgraph_item::Mode port_mode;
 	uint port_type;
 	Flags port_flags;
+	bool port_audio;
 	QList<qpwgraph_pipewire::Link *> port_links;
 };
 
@@ -531,7 +532,21 @@ void qpwgraph_registry_event_global (
 		str = spa_dict_lookup(props, PW_KEY_PORT_CONTROL);
 		if (str && pw_properties_parse_bool(str))
 			port_flags |= qpwgraph_pipewire::Port::Control;
-		if (pw->createPort(id, node_id, port_name, port_mode, port_type, port_flags))
+		const char *format_dsp = spa_dict_lookup(props, PW_KEY_FORMAT_DSP);
+		const char *media_type = spa_dict_lookup(props, PW_KEY_MEDIA_TYPE);
+		bool port_audio = false;
+		if (media_type) {
+			port_audio = (QString::fromLatin1(media_type).compare(
+				"Audio", Qt::CaseInsensitive) == 0);
+		} else if (format_dsp) {
+			port_audio = QString::fromLatin1(format_dsp).contains(
+				"audio", Qt::CaseInsensitive);
+		} else {
+			port_audio = (n
+				&& (n->node_type & qpwgraph_pipewire::Node::Audio) != 0);
+		}
+		if (pw->createPort(id, node_id, port_name,
+				port_mode, port_type, port_flags, port_audio))
 			++nchanged;
 	}
 	else
@@ -981,6 +996,8 @@ bool qpwgraph_pipewire::findNodePort (
 	Port *p = findPort(port_id);
 	if (p == nullptr)
 		return false;
+	if (!p->port_audio)
+		return false;
 
 	const uint node_type
 		= qpwgraph_pipewire::nodeType();
@@ -1076,6 +1093,8 @@ void qpwgraph_pipewire::updateItems (void)
 		if (!n1->node_ready)
 			continue;
 		foreach (const Port *p1, n1->node_ports) {
+			if (!p1->port_audio)
+				continue;
 			const qpwgraph_item::Mode port_mode1
 				= p1->port_mode;
 			qpwgraph_node *node1 = nullptr;
@@ -1323,7 +1342,8 @@ qpwgraph_pipewire::Port *qpwgraph_pipewire::createPort (
 	const QString& port_name,
 	qpwgraph_item::Mode port_mode,
 	uint port_type,
-	uint port_flags )
+	uint port_flags,
+	bool port_audio )
 {
 	Node *node = findNode(node_id);
 	if (node == nullptr)
@@ -1335,6 +1355,7 @@ qpwgraph_pipewire::Port *qpwgraph_pipewire::createPort (
 	port->port_mode = port_mode;
 	port->port_type = port_type;
 	port->port_flags = Port::Flags(port_flags);
+	port->port_audio = port_audio;
 
 	if (port->port_type == midi2PortType())
 		port->port_type =  midiPortType();	// FIXME: legacy aliasing!...

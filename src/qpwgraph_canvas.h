@@ -31,6 +31,7 @@
 
 // Forward decls.
 class QGraphicsScene;
+class QPainter;
 
 class QRubberBand;
 class QUndoStack;
@@ -279,6 +280,9 @@ protected slots:
 	void searchEditingFinished();
 
 protected:
+
+	// Canvas background.
+	void drawBackground(QPainter *painter, const QRectF& rect) override;
 
 	// Item finder (internal).
 	qpwgraph_item *itemAt(const QPointF& pos) const;

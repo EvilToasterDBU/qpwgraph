@@ -17,9 +17,10 @@
   _qt5-qtbase-devel_) and of course the [PipeWire API](https://pipewire.org)
   C development libraries and headers (_pipewire-devel_).
 
-  Optionally on build configure time, [ALSA](https://www.alsa-project.org)
-  development libraries and headers (_alsa-devel_) are also required if
-  ALSA MIDI (Sequencer) support is desired (`cmake -DCONFIG_ALSA_MIDI=[1|ON]`...).
+  By default, the graph displays PipeWire audio streams only. Non-audio
+  PipeWire ports and ALSA MIDI support are excluded. ALSA MIDI can be enabled
+  at build time with `-DCONFIG_ALSA_MIDI=ON`; this requires the [ALSA](https://www.alsa-project.org)
+  development libraries and headers (_alsa-devel_).
 
 ## Building
 

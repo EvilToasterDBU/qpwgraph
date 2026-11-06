@@ -26,6 +26,7 @@
 #include "qpwgraph_toposort.h"
 
 #include <QGraphicsScene>
+#include <QPainter>
 #include <QRegularExpression>
 #include <QTransform>
 
@@ -59,6 +60,9 @@ static const char *ColorsGroup      = "/GraphColors";
 
 static const char *NodeAliasesGroup = "/GraphNodeAliases";
 static const char *PortAliasesGroup = "/GraphPortAliases";
+
+static constexpr qreal GraphGridSize = 32.0;
+static constexpr qreal GraphMajorGridSize = 128.0;
 
 
 //----------------------------------------------------------------------------
@@ -137,6 +141,59 @@ qpwgraph_canvas::~qpwgraph_canvas (void)
 	delete m_patchbay;
 	delete m_commands;
 	delete m_scene;
+}
+
+
+// Draw the graph alignment grid.
+void qpwgraph_canvas::drawBackground ( QPainter *painter, const QRectF& rect )
+{
+	QGraphicsView::drawBackground(painter, rect);
+
+	if (painter == nullptr)
+		return;
+
+	const QColor background = palette().color(QPalette::Window);
+	const bool is_dark = (background.lightness() < 128);
+	QColor minor_color = is_dark
+		? background.lighter(150) : background.darker(135);
+	QColor major_color = is_dark
+		? background.lighter(190) : background.darker(175);
+	minor_color.setAlpha(42);
+	major_color.setAlpha(72);
+
+	painter->save();
+	painter->setRenderHint(QPainter::Antialiasing, false);
+
+	const qreal left = std::floor(rect.left() / GraphGridSize) * GraphGridSize;
+	const qreal top = std::floor(rect.top() / GraphGridSize) * GraphGridSize;
+	QPen pen(minor_color);
+	pen.setCosmetic(true);
+	painter->setPen(pen);
+	for (qreal x = left; x <= rect.right(); x += GraphGridSize) {
+		const qreal index = x / GraphGridSize;
+		if (std::fmod(index, GraphMajorGridSize / GraphGridSize) == 0.0)
+			continue;
+		painter->drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()));
+	}
+	for (qreal y = top; y <= rect.bottom(); y += GraphGridSize) {
+		const qreal index = y / GraphGridSize;
+		if (std::fmod(index, GraphMajorGridSize / GraphGridSize) == 0.0)
+			continue;
+		painter->drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y));
+	}
+
+	pen.setColor(major_color);
+	painter->setPen(pen);
+	const qreal major_left
+		= std::floor(rect.left() / GraphMajorGridSize) * GraphMajorGridSize;
+	const qreal major_top
+		= std::floor(rect.top() / GraphMajorGridSize) * GraphMajorGridSize;
+	for (qreal x = major_left; x <= rect.right(); x += GraphMajorGridSize)
+		painter->drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()));
+	for (qreal y = major_top; y <= rect.bottom(); y += GraphMajorGridSize)
+		painter->drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y));
+
+	painter->restore();
 }
 
 
@@ -1450,6 +1507,7 @@ bool qpwgraph_canvas::restoreNode ( qpwgraph_node *node )
 	if (node_pos.isNull())
 		return false;
 
+	node_pos = snapPos(node_pos);
 	boundingPos(node_pos);
 
 	node->setPos(node_pos);
@@ -1954,6 +2012,7 @@ void qpwgraph_canvas::repelOverlappingNodes ( qpwgraph_node *node,
 					pos2.setY(pos1.y() + dy);
 			}
 			// Repel this node...
+			pos2 = snapPos(pos2);
 			node2->setPos(pos2);
 			// Add this node for undo/redo...
 			if (move_command)
@@ -1993,6 +2052,8 @@ void qpwgraph_canvas::arrangeNodes (void)
 
 	qpwgraph_toposort topo(nodes);
 	auto newPositions = topo.arrange(QGraphicsView::viewport()->rect());
+	for (auto iter = newPositions.begin(); iter != newPositions.end(); ++iter)
+		iter.value() = snapPos(iter.value());
 
 	qpwgraph_move_command *mc = new qpwgraph_move_command(this, newPositions);
 
@@ -2089,8 +2150,8 @@ void qpwgraph_canvas::boundingPos ( QPointF& pos )
 QPointF qpwgraph_canvas::snapPos ( const QPointF& pos ) const
 {
 	return QPointF(
-		4.0 * ::round(0.25 * pos.x()),
-		4.0 * ::round(0.25 * pos.y()));
+		GraphGridSize * ::round(pos.x() / GraphGridSize),
+		GraphGridSize * ::round(pos.y() / GraphGridSize));
 }
 
 
