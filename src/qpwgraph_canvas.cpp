@@ -55,6 +55,7 @@ static const char *CanvasRectKey    = "/CanvasRect";
 static const char *CanvasZoomKey    = "/CanvasZoom";
 
 static const char *NodePosGroup     = "/GraphNodePos";
+static const char *NodePortsGroup   = "/GraphNodePortGroups";
 
 static const char *ColorsGroup      = "/GraphColors";
 
@@ -967,6 +968,19 @@ void qpwgraph_canvas::mouseReleaseEvent ( QMouseEvent *event )
 
 	switch (m_state) {
 	case DragStart:
+		if (m_item && m_item->type() == qpwgraph_node::Type) {
+			qpwgraph_node *node = static_cast<qpwgraph_node *> (m_item);
+			const qpwgraph_item::Mode group = node->portGroupAt(m_pos);
+			if (group == qpwgraph_item::Input ||
+				group == qpwgraph_item::Output) {
+				node->setPortGroupCollapsed(group,
+					!node->isPortGroupCollapsed(group));
+				saveNode(node);
+				m_item = nullptr;
+				++nchanged;
+				break;
+			}
+		}
 		// Make individual item (de)selections...
 		if ((event->modifiers()
 			& (Qt::ShiftModifier | Qt::ControlModifier)) == 0) {
@@ -1500,6 +1514,13 @@ bool qpwgraph_canvas::restoreNode ( qpwgraph_node *node )
 	if (!node_title.isEmpty())
 		node->setNodeTitle(node_title);
 
+	m_settings->beginGroup(NodePortsGroup);
+	node->setPortGroupCollapsed(qpwgraph_item::Input,
+		m_settings->value(node_key + "/Input", false).toBool());
+	node->setPortGroupCollapsed(qpwgraph_item::Output,
+		m_settings->value(node_key + "/Output", false).toBool());
+	m_settings->endGroup();
+
 	m_settings->beginGroup(NodePosGroup);
 	QPointF node_pos = m_settings->value('/' + node_key).toPointF();
 	m_settings->endGroup();
@@ -1542,6 +1563,13 @@ bool qpwgraph_canvas::saveNode ( qpwgraph_node *node ) const
 
 	m_settings->beginGroup(NodePosGroup);
 	m_settings->setValue('/' + node_key, node->pos());
+	m_settings->endGroup();
+
+	m_settings->beginGroup(NodePortsGroup);
+	m_settings->setValue(node_key + "/Input",
+		node->isPortGroupCollapsed(qpwgraph_item::Input));
+	m_settings->setValue(node_key + "/Output",
+		node->isPortGroupCollapsed(qpwgraph_item::Output));
 	m_settings->endGroup();
 
 	return true;

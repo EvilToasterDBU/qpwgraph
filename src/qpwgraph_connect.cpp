@@ -197,7 +197,7 @@ void qpwgraph_connect::updatePathTo ( const QPointF& pos )
 
 void qpwgraph_connect::updatePath (void)
 {
-	if (m_port2) 
+	if (m_port1 && m_port2)
 		updatePathTo(m_port2->portPos());
 }
 

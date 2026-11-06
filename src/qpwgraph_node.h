@@ -108,6 +108,12 @@ public:
 	// Path/shape updater.
 	void updatePath();
 
+	// Input/output port groups.
+	void setPortGroupCollapsed(Mode mode, bool collapsed);
+	bool isPortGroupCollapsed(Mode mode) const;
+	Mode portGroupAt(const QPointF& scene_pos) const;
+	QPointF portGroupPos(Mode mode) const;
+
 	// Node hash key (by id).
 	class NodeIdKey : public IdKey
 	{
@@ -161,6 +167,10 @@ private:
 
 	bool m_name_ex;
 	bool m_label_ex;
+	bool m_input_collapsed;
+	bool m_output_collapsed;
+
+	QRectF portGroupHeaderRect(Mode mode) const;
 
 	QGraphicsPixmapItem *m_pixmap;
 	QGraphicsTextItem   *m_text;

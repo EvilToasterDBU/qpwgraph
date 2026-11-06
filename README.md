@@ -12,7 +12,8 @@
   by Rui Nuno Capela <rncbc@rncbc.org>.
 
   The redesign branch adds a snap grid, filters PipeWire to audio ports by
-  default, and supports saved user-defined audio pass-through nodes.
+  default, supports saved user-defined audio pass-through nodes, and lets you
+  collapse each node's input or output port group.
 
 ## Prerequisites
 

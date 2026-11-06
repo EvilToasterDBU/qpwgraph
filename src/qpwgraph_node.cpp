@@ -20,8 +20,10 @@
 *****************************************************************************/
 
 #include "qpwgraph_node.h"
+#include "qpwgraph_connect.h"
 
 #include <QGraphicsScene>
+#include <QCoreApplication>
 
 #include <QStyleOptionGraphicsItem>
 
@@ -43,7 +45,8 @@ qpwgraph_node::qpwgraph_node (
 	uint id, const QString& name, qpwgraph_item::Mode mode, uint type )
 	: qpwgraph_item(nullptr),
 		m_id(id), m_name(name), m_mode(mode), m_type(type),
-		m_num(0), m_name_ex(false), m_label_ex(false)
+		m_num(0), m_name_ex(false), m_label_ex(false),
+		m_input_collapsed(false), m_output_collapsed(false)
 {
 	QGraphicsPathItem::setZValue(0.0);
 
@@ -387,54 +390,148 @@ void qpwgraph_node::resetPorts (void)
 }
 
 
+// Input/output port groups.
+void qpwgraph_node::setPortGroupCollapsed ( Mode mode, bool collapsed )
+{
+	if (mode == Input && m_input_collapsed != collapsed) {
+		m_input_collapsed = collapsed;
+		updatePath();
+	}
+	else
+	if (mode == Output && m_output_collapsed != collapsed) {
+		m_output_collapsed = collapsed;
+		updatePath();
+	}
+}
+
+
+bool qpwgraph_node::isPortGroupCollapsed ( Mode mode ) const
+{
+	if (mode == Input)
+		return m_input_collapsed;
+	if (mode == Output)
+		return m_output_collapsed;
+	return false;
+}
+
+
+QRectF qpwgraph_node::portGroupHeaderRect ( Mode mode ) const
+{
+	const qreal width = itemRect().width();
+	const qreal height = m_text->boundingRect().height() + 2;
+	const qreal half = width / 2.0;
+	if (mode == Input)
+		return QRectF(6.0, height, half - 8.0, 18.0);
+	return QRectF(half + 2.0, height, half - 8.0, 18.0);
+}
+
+
+qpwgraph_item::Mode qpwgraph_node::portGroupAt ( const QPointF& scene_pos ) const
+{
+	const QPointF pos = mapFromScene(scene_pos);
+	if (portGroupHeaderRect(Input).contains(pos)) {
+		foreach (qpwgraph_port *port, m_ports) {
+			if (port->isInput())
+				return Input;
+		}
+	}
+	if (portGroupHeaderRect(Output).contains(pos)) {
+		foreach (qpwgraph_port *port, m_ports) {
+			if (port->isOutput())
+				return Output;
+		}
+	}
+	return None;
+}
+
+
+QPointF qpwgraph_node::portGroupPos ( Mode mode ) const
+{
+	const QRectF header = portGroupHeaderRect(mode);
+	const qreal x = (mode == Output ? itemRect().width() : 0.0);
+	return mapToScene(QPointF(x, header.center().y()));
+}
+
+
 // Path/shape updater.
 void qpwgraph_node::updatePath (void)
 {
-	const QRectF& rect = m_text->boundingRect();
-	int width = rect.width() / 2 + 24;
-	int wi, wo;
-	wi = wo = width;
+	const QRectF& title_rect = m_text->boundingRect();
+	int width = title_rect.width() / 2 + 24;
+	int wi = width;
+	int wo = width;
+	QList<qpwgraph_port *> inputs;
+	QList<qpwgraph_port *> outputs;
 	foreach (qpwgraph_port *port, m_ports) {
-		const int w = port->itemRect().width();
+		const int port_width = port->itemRect().width();
 		if (port->isOutput()) {
-			if (wo < w) wo = w;
+			wo = qMax(wo, port_width);
+			outputs.append(port);
 		} else {
-			if (wi < w) wi = w;
+			wi = qMax(wi, port_width);
+			inputs.append(port);
 		}
 	}
-	width = 4 * ((wi + wo) / 4);
+	width = qMax(156, 4 * ((wi + wo) / 4));
+	std::sort(inputs.begin(), inputs.end(), qpwgraph_port::Compare());
+	std::sort(outputs.begin(), outputs.end(), qpwgraph_port::Compare());
 
-	std::sort(m_ports.begin(), m_ports.end(), qpwgraph_port::Compare());
+	const qreal group_top = title_rect.height() + 2.0;
+	const qreal group_header_height = 18.0;
+	qreal input_bottom = group_top;
+	qreal output_bottom = group_top;
 
-	int height = rect.height() + 2;
-	int type = 0;
-	int yi, yo;
-	yi = yo = height;
-	foreach (qpwgraph_port *port, m_ports) {
-		const QRectF& port_rect = port->itemRect();
-		const int w = port_rect.width();
-		const int h = port_rect.height() + 1;
-		if (type - port->portType()) {
-			type = port->portType();
-			height += 2;
-			yi = yo = height;
-		}
-		if (port->isOutput()) {
-			port->setPos(width + 6 - w, yo);
-			yo += h;
-			if (height < yo)
-				height = yo;
+	if (!inputs.isEmpty()) {
+		input_bottom += group_header_height;
+		if (m_input_collapsed) {
+			foreach (qpwgraph_port *port, inputs)
+				port->setVisible(false);
 		} else {
-			port->setPos(-6, yi);
-			yi += h;
-			if (height < yi)
-				height = yi;
+			int type = 0;
+			for (qpwgraph_port *port : inputs) {
+				port->setVisible(true);
+				if (type - int(port->portType())) {
+					type = int(port->portType());
+					input_bottom += 2.0;
+				}
+				const QRectF& port_rect = port->itemRect();
+				port->setPos(-6.0, input_bottom);
+				input_bottom += port_rect.height() + 1.0;
+			}
 		}
 	}
 
+	if (!outputs.isEmpty()) {
+		output_bottom += group_header_height;
+		if (m_output_collapsed) {
+			foreach (qpwgraph_port *port, outputs)
+				port->setVisible(false);
+		} else {
+			int type = 0;
+			for (qpwgraph_port *port : outputs) {
+				port->setVisible(true);
+				if (type - int(port->portType())) {
+					type = int(port->portType());
+					output_bottom += 2.0;
+				}
+				const QRectF& port_rect = port->itemRect();
+				port->setPos(width + 6.0 - port_rect.width(), output_bottom);
+				output_bottom += port_rect.height() + 1.0;
+			}
+		}
+	}
+
+	const qreal height = qMax(input_bottom, output_bottom) + 6.0;
 	QPainterPath path;
-	path.addRoundedRect(0, 0, width, height + 6, 5, 5);
+	path.addRoundedRect(0, 0, width, height, 5, 5);
 	/*QGraphicsPathItem::*/setPath(path);
+
+	foreach (qpwgraph_port *port, m_ports) {
+		foreach (qpwgraph_connect *connect, port->connects()) {
+			if (connect && connect->port1() && connect->port2())
+				connect->updatePath();
+		}
+	}
 }
 
 
@@ -470,6 +567,43 @@ void qpwgraph_node::paint ( QPainter *painter,
 	painter->setBrush(node_grad);
 
 	painter->drawPath(QGraphicsPathItem::path());
+
+	QColor group_color = painter->pen().color();
+	group_color.setAlpha(210);
+	painter->setPen(group_color);
+	QFont group_font = painter->font();
+	group_font.setPointSizeF(qMax(7.0, group_font.pointSizeF() - 1.0));
+	painter->setFont(group_font);
+	const qreal group_y = m_text->boundingRect().height() + 2.0;
+	int input_count = 0;
+	int output_count = 0;
+	foreach (qpwgraph_port *port, m_ports) {
+		if (port->isInput()) ++input_count;
+		if (port->isOutput()) ++output_count;
+	}
+	if (input_count > 0 || output_count > 0) {
+		painter->setPen(QPen(group_color, 0));
+		painter->drawLine(QPointF(6.0, group_y + 18.0),
+			QPointF(node_rect.width() - 6.0, group_y + 18.0));
+		if (input_count > 0) {
+			const QString marker = (m_input_collapsed ? QStringLiteral("▸ ")
+				: QStringLiteral("▾ "));
+			painter->drawText(portGroupHeaderRect(Input),
+				Qt::AlignVCenter | Qt::AlignLeft,
+				marker + QCoreApplication::translate("qpwgraph_node", "Inputs")
+				+ QStringLiteral(" · ")
+				+ QString::number(input_count));
+		}
+		if (output_count > 0) {
+			const QString marker = (m_output_collapsed ? QStringLiteral("▸ ")
+				: QStringLiteral("▾ "));
+			painter->drawText(portGroupHeaderRect(Output),
+				Qt::AlignVCenter | Qt::AlignLeft,
+				marker + QCoreApplication::translate("qpwgraph_node", "Outputs")
+				+ QStringLiteral(" · ")
+				+ QString::number(output_count));
+		}
+	}
 
 	m_pixmap->setPos(node_rect.x() + 4, node_rect.y() + 4);
 

@@ -246,6 +246,9 @@ QString qpwgraph_port::portNameLabelEx (void) const
 
 QPointF qpwgraph_port::portPos (void) const
 {
+	if (m_node && m_node->isPortGroupCollapsed(m_mode))
+		return m_node->portGroupPos(m_mode);
+
 	QPointF pos = QGraphicsPathItem::scenePos();
 
 	const QRectF& rect = itemRect();
