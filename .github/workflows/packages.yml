@@ -19,10 +19,13 @@ jobs:
       - uses: actions/checkout@v6
       - name: Build Debian package
         run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then version=1.0.4; fi
           mkdir -p dist
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/src" \
             -w /src \
+            -e PACKAGE_VERSION="$version" \
             debian:stable-slim sh -euxc '
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -33,6 +36,7 @@ jobs:
               mkdir -p /tmp/build/qpwgraph
               cp -a /src/. /tmp/build/qpwgraph/
               cd /tmp/build/qpwgraph
+              sed -i "1s/^qpwgraph ([^)]*)/qpwgraph (${PACKAGE_VERSION}-1)/" debian/changelog
               DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b
               mkdir -p /src/dist/debian
               cp /tmp/build/*.deb /src/dist/debian/
@@ -50,17 +54,23 @@ jobs:
       - uses: actions/checkout@v6
       - name: Build source archive
         run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then version=1.0.4; fi
           mkdir -p dist
-          git archive --format=tar --prefix=qpwgraph-1.0.4/ HEAD | gzip > dist/qpwgraph-1.0.4.tar.gz
+          git archive --format=tar --prefix="qpwgraph-${version}/" HEAD | gzip > "dist/qpwgraph-${version}.tar.gz"
+          sed -i "s/^Version:[[:space:]]*.*/Version:\t${version}/" rpm/qpwgraph.spec
       - name: Build RPM
         run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then version=1.0.4; fi
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/src" \
+            -e PACKAGE_VERSION="$version" \
             fedora:latest sh -euxc '
               dnf install -y rpm-build cmake gcc gcc-c++ qt6-qtbase-devel \
                 qt6-qtsvg-devel qt6-qttools-devel pipewire-devel
               mkdir -p /tmp/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
-              cp /src/dist/qpwgraph-1.0.4.tar.gz /tmp/rpmbuild/SOURCES/
+              cp "/src/dist/qpwgraph-${PACKAGE_VERSION}.tar.gz" /tmp/rpmbuild/SOURCES/
               cp /src/rpm/qpwgraph.spec /tmp/rpmbuild/SPECS/
               rpmbuild -bb --define "_topdir /tmp/rpmbuild" \
                 /tmp/rpmbuild/SPECS/qpwgraph.spec
@@ -80,10 +90,13 @@ jobs:
       - uses: actions/checkout@v6
       - name: Prepare source archive
         run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then version=1.0.4; fi
           mkdir -p dist/arch
-          git archive --format=tar --prefix=qpwgraph-1.0.4/ HEAD | gzip > dist/arch/qpwgraph-1.0.4.tar.gz
+          git archive --format=tar --prefix="qpwgraph-${version}/" HEAD | gzip > "dist/arch/qpwgraph-${version}.tar.gz"
           cp packaging/arch/PKGBUILD dist/arch/
-          archive_sha256=$(sha256sum dist/arch/qpwgraph-1.0.4.tar.gz | cut -d ' ' -f 1)
+          sed -i "s/^pkgver=.*/pkgver=${version}/" dist/arch/PKGBUILD
+          archive_sha256=$(sha256sum "dist/arch/qpwgraph-${version}.tar.gz" | cut -d ' ' -f 1)
           sed -i "s/sha256sums=('SKIP')/sha256sums=('${archive_sha256}')/" dist/arch/PKGBUILD
       - name: Build package
         run: |
@@ -135,3 +148,20 @@ jobs:
           name: appimage
           path: dist/*.AppImage
           if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: github.ref_type == 'tag'
+    needs: [debian, fedora, arch, appimage]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "qpwgraph $GITHUB_REF_NAME" --generate-notes
